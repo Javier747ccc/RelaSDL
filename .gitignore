@@ -1,0 +1,9 @@
+.vs/
+build-mingw/
+build-mingw-debug/
+x64/
+RelaSDL/x64/
+*.obj
+*.idb
+*.pdb
+*.exe

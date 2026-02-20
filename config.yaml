@@ -1,0 +1,4 @@
+eventos:
+  - tipo: pausa
+    columna: A
+    tiempo: 10.0

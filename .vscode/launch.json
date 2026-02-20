@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug RelaSDL (MinGW64)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-mingw-debug/RelaSDL.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/build-mingw-debug",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:\\msys64\\mingw64\\bin\\gdb.exe",
+      "preLaunchTask": "Build (MinGW Debug)"
+    }
+  ]
+}
