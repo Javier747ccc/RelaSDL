@@ -52,19 +52,22 @@ struct AppEvent {
 	std::string type;
 	char column;
 	double time;
+	double amount;
 	bool triggered;
+	int triggeredMask;
 };
 
 std::vector<AppEvent> eventos;
 
-
+/*
 double Lorentz(double v)
 {
 	const double c = 1;
-	double tc = 1.0/sqrt(1-(v*v)/(c*c));
+	double tc = sqrt(1-(v*v)/(c*c));
 	return tc;
 
 }
+*/
 
 static double FactorFromVelocity(double v)
 {
@@ -78,9 +81,9 @@ static double FactorFromVelocity(double v)
 		term = 1.0e-6;
 	}
 	if (v < 0.0) {
-		return sqrt(term);
+		return 1.0 / sqrt(term);
 	}
-	return 1.0 / sqrt(term);
+	return sqrt(term);
 }
 
 static double VelocityFromFactor(double factor)
@@ -110,54 +113,102 @@ static char GetLabelForWindowColumn(int windowIndex, int columnIndex)
 	return labels[windowIndex][columnIndex];
 }
 
-static void LoadEventosFromYaml(const char* filePath)
+static int GetIndexForLabelInWindow(int windowIndex, char label)
+{
+	char target = (char)toupper((unsigned char)label);
+	if (windowIndex < 0 || windowIndex >= kWindowCount) {
+		return -1;
+	}
+	for (int c = 0; c < kColumnsPerWindow; c++) {
+		if (GetLabelForWindowColumn(windowIndex, c) == target) {
+			return windowIndex * kColumnsPerWindow + c;
+		}
+	}
+	return -1;
+}
+
+static bool LoadEventosFromYaml(const char* filePath)
 {
 	try {
 		YAML::Node config = YAML::LoadFile(filePath);
 		if (!config["eventos"] || !config["eventos"].IsSequence()) {
-			return;
+			return false;
 		}
+		eventos.clear();
 		for (const auto& node : config["eventos"]) {
-			if (!node["tipo"] || !node["columna"] || !node["tiempo"]) {
+			if (!node.IsMap()) {
 				continue;
 			}
-			std::string type = node["tipo"].as<std::string>();
-			std::string col = node["columna"].as<std::string>();
+			const YAML::Node tipoNode = node["tipo"];
+			const YAML::Node columnaNode = node["columna"];
+			const YAML::Node tiempoNode = node["tiempo"];
+			if (!tipoNode.IsDefined() || !columnaNode.IsDefined() || !tiempoNode.IsDefined()) {
+				continue;
+			}
+			std::string type = tipoNode.as<std::string>();
+			std::string col = columnaNode.as<std::string>();
 			if (col.empty()) {
 				continue;
 			}
 			char column = col[0];
-			double time = node["tiempo"].as<double>();
-			AppEvent ev { type, column, time, false };
+			double time = tiempoNode.as<double>();
+			double amount = 0.0;
+			if (type == "cambio") {
+				const YAML::Node cantidadNode = node["cantidad"];
+				if (!cantidadNode.IsDefined()) {
+					continue;
+				}
+				amount = cantidadNode.as<double>();
+			}
+			AppEvent ev { type, column, time, amount, false, 0 };
 			eventos.push_back(ev);
 		}
+		return !eventos.empty();
 	} catch (const std::exception& ex) {
 		SDL_Log("Fallo al cargar config.yaml: %s", ex.what());
 	}
+	return false;
 }
 
 static void ResetEventos()
 {
 	for (auto& ev : eventos) {
 		ev.triggered = false;
+		ev.triggeredMask = 0;
 	}
 }
 
 static bool ColumnReached(char column, double time)
 {
 	char target = (char)toupper((unsigned char)column);
-	for (int w = 0; w < kWindowCount; w++) {
-		for (int c = 0; c < kColumnsPerWindow; c++) {
-			if (GetLabelForWindowColumn(w, c) == target) {
-				int idx = w * kColumnsPerWindow + c;
-				if (Times[idx] >= time) {
-					return true;
-				}
+	int w = 0;
+	for (int c = 0; c < kColumnsPerWindow; c++) {
+		if (GetLabelForWindowColumn(w, c) == target) {
+			int idx = w * kColumnsPerWindow + c;
+			if (Times[idx] >= time) {
+				return true;
 			}
 		}
 	}
 	return false;
 }
+
+static bool ColumnReachedInWindow(int windowIndex, char column, double time)
+{
+	if (windowIndex < 0 || windowIndex >= kWindowCount) {
+		return false;
+	}
+	char target = (char)toupper((unsigned char)column);
+	for (int c = 0; c < kColumnsPerWindow; c++) {
+		if (GetLabelForWindowColumn(windowIndex, c) == target) {
+			int idx = windowIndex * kColumnsPerWindow + c;
+			return Times[idx] >= time;
+		}
+	}
+	return false;
+}
+
+static void LoadEventos();
 
 static void ApplyVelocityDelta(int index, double delta)
 {
@@ -169,6 +220,21 @@ static void ApplyVelocityDelta(int index, double delta)
 		Velocidades[index] = kVelocityLimit;
 	}
 	Factors[index] = FactorFromVelocity(Velocidades[index]);
+}
+
+static void ApplyDeltaToLabelInWindow(int windowIndex, char column, double delta)
+{
+	if (windowIndex < 0 || windowIndex >= kWindowCount) {
+		return;
+	}
+	char target = (char)toupper((unsigned char)column);
+	for (int c = 0; c < kColumnsPerWindow; c++) {
+		if (GetLabelForWindowColumn(windowIndex, c) == target) {
+			int idx = windowIndex * kColumnsPerWindow + c;
+			ApplyVelocityDelta(idx, delta);
+			break;
+		}
+	}
 }
 
 static void AdjustSelectedVelocity(int windowIndex, double delta)
@@ -266,9 +332,9 @@ int InitSdl()
 		quit("SDL init failed");
 	}
 
+	const char* titles[kWindowCount] = { "Particula A", "Particula B", "Particula C" };
 	for (int i = 0; i < kWindowCount; i++) {
-		char title[64];
-		sprintf(title, "RelaSDL %d", i + 1);
+		const char* title = titles[i];
 		if (!SDL_CreateWindowAndRenderer(title, PanWidth, PanHeight, SDL_WINDOW_RESIZABLE, &windows[i], &renderers[i])) {
 			SDL_Log("Fallo en SDL_CreateWindowAndRenderer: %s", SDL_GetError());
 			return SDL_APP_FAILURE;
@@ -374,7 +440,6 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result)
 void DrawFactorGauges(SDL_Renderer *surf, int baseIndex, int selectedIndex, int windowIndex)
 {
     char StrTemp[256];
-	sprintf(StrTemp,"1");
 
 	int w = PanWidth;
 	int h = PanHeight;
@@ -404,6 +469,37 @@ void DrawFactorGauges(SDL_Renderer *surf, int baseIndex, int selectedIndex, int 
 		sprintf(StrTemp, "v=%0.3f", Velocidades[idx]);
 		DrawSurfText(surf, StrTemp, x, 4 * h / 6 + 24, fuentes[4]);
 	}
+
+	int idxB = GetIndexForLabelInWindow(windowIndex, 'B');
+	int idxA = GetIndexForLabelInWindow(windowIndex, 'A');
+	int idxC = GetIndexForLabelInWindow(windowIndex, 'C');
+	if (idxB >= 0 && idxA >= 0 && idxC >= 0) {
+		int topLineY = h - (h / 16);
+		int bottomLineY = h - (h / 56);
+		int margin = w / 75;
+		int textY = topLineY - (h / 22);
+
+		int xB = Posx[idxB - baseIndex];
+		int xA = Posx[idxA - baseIndex];
+		int xC = Posx[idxC - baseIndex];
+
+		double dtBA = Times[idxB] - Times[idxA];
+		double dtAC = Times[idxA] - Times[idxC];
+		double dtBC = Times[idxB] - Times[idxC];
+
+		SDL_Color Green = { 20, 230, 20 };
+		SDL_SetRenderDrawColor(surf, Green.r, Green.g, Green.b, SDL_ALPHA_OPAQUE);
+		SDL_RenderLine(surf, xB + margin, topLineY, xA - margin, topLineY);
+		SDL_RenderLine(surf, xA + margin, topLineY, xC - margin, topLineY);
+		SDL_RenderLine(surf, xB + margin, bottomLineY, xC - margin, bottomLineY);
+
+		sprintf(StrTemp, "%0.3f", dtBA);
+		DrawSurfText(surf, StrTemp, ((xB + xA) / 2) - (w / 42), textY, fuentes[4], Green);
+		sprintf(StrTemp, "%0.3f", dtAC);
+		DrawSurfText(surf, StrTemp, ((xA + xC) / 2) - (w / 42), textY, fuentes[4], Green);
+		sprintf(StrTemp, "%0.3f", dtBC);
+		DrawSurfText(surf, StrTemp, ((xB + xC) / 2) - (w / 42), bottomLineY - (h / 22), fuentes[4], Green);
+	}
 }
 
 
@@ -426,12 +522,28 @@ void DrawScene()
 	}
 
 	for (auto& ev : eventos) {
-		if (ev.triggered) {
+		if (ev.type == "pausa") {
+			if (!ev.triggered && ColumnReached(ev.column, ev.time)) {
+				Pause = true;
+				ev.triggered = true;
+			}
 			continue;
 		}
-		if (ev.type == "pausa" && ColumnReached(ev.column, ev.time)) {
-			Pause = true;
-			ev.triggered = true;
+		if (ev.type == "cambio") {
+			for (int w = 0; w < kWindowCount; w++) {
+				int bit = 1 << w;
+				if ((ev.triggeredMask & bit) != 0) {
+					continue;
+				}
+				if (ColumnReachedInWindow(w, ev.column, ev.time)) {
+					double signedAmount = (w == 0) ? ev.amount : -ev.amount;
+					ApplyDeltaToLabelInWindow(w, ev.column, signedAmount);
+					ev.triggeredMask |= bit;
+				}
+			}
+			if (ev.triggeredMask == ((1 << kWindowCount) - 1)) {
+				ev.triggered = true;
+			}
 		}
 	}
 
@@ -439,7 +551,7 @@ void DrawScene()
 	{
 		for (int i = 0; i < kTotalColumns; i++)
 		{
-			Times[i]+=(1.0/1000.0) * (1/Factors[i]);
+			Times[i]+=(1.0/100.0) * (1/Factors[i]);
 		}
 		NextStep=false;
 	}
@@ -527,11 +639,25 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 
 	
 	InitSdl();
-	LoadEventosFromYaml("config.yaml");
+	LoadEventos();
 	ResetState();
 
 
 
 	return SDL_APP_CONTINUE;  /* carry on with the program! */
 
+}
+static void LoadEventos()
+{
+	const char* basePath = SDL_GetBasePath();
+	if (basePath != NULL) {
+		std::string configPath = std::string(basePath) + "config.yaml";
+		if (LoadEventosFromYaml(configPath.c_str())) {
+			return;
+		}
+	}
+	if (LoadEventosFromYaml("config.yaml")) {
+		return;
+	}
+	LoadEventosFromYaml("../config.yaml");
 }

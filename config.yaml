@@ -1,4 +1,16 @@
 eventos:
   - tipo: pausa
     columna: A
+    tiempo: 9.0
+  - tipo: cambio
+    columna: A
+    tiempo: 0.0
+    cantidad: 0.5
+  - tipo: cambio
+    columna: A
     tiempo: 10.0
+    cantidad: -0.5
+  - tipo: cambio
+    columna: A
+    tiempo: 12.0
+    cantidad: -0.5

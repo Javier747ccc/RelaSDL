@@ -42,4 +42,7 @@ add_custom_command(TARGET RelaSDL POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           ${CMAKE_CURRENT_SOURCE_DIR}/Arial-Rounded-MT-Bold.ttf
           $<TARGET_FILE_DIR:RelaSDL>/Arial-Rounded-MT-Bold.ttf
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          ${CMAKE_CURRENT_SOURCE_DIR}/config.yaml
+          $<TARGET_FILE_DIR:RelaSDL>/config.yaml
 )
